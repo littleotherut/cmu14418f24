@@ -27,11 +27,14 @@ export void mandelbrot_ispc(uniform float x0, uniform float y0,
     float dy = (y1 - y0) / height;
 
     foreach (j = 0 ... height, i = 0 ... width) {
+    // for(uniform int j = 0 ; j < height ; ++ j){
+    //     foreach (i = 0 ... width){
             float x = x0 + i * dx;
             float y = y0 + j * dy;
 
             int index = j * width + i;
             output[index] = mandel(x, y, maxIterations);
+        // }
     }
 }
 
@@ -68,8 +71,8 @@ export void mandelbrot_ispc_withtasks(uniform float x0, uniform float y0,
                                       uniform int output[])
 {
 
-    uniform int threadCount = 2;
-    uniform int rowsPerTask = height / threadCount;
+    uniform int threadCount = 32;
+    uniform int rowsPerTask = (height + threadCount - 1) / threadCount;
 
     // create threadCount tasks
     launch[threadCount] mandelbrot_ispc_task(x0, y0, x1, y1,

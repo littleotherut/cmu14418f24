@@ -29,6 +29,34 @@ static inline int nextPow2(int n)
     return n;
 }
 
+__global__ void parallel_up(int *data,const int n,const int twod1,const int twod){
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if(idx < n){
+        data[(idx+1)*twod1-1] += data[idx*twod1+twod-1];
+    }
+}
+
+__global__ void parallel_dowm(int *data,const int n,const int twod1,const int twod){
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if(idx < n){
+        int t = data[idx*twod1+twod-1];
+        data[idx*twod1+twod-1] = data[(idx+1)*twod1-1];
+        data[(idx+1)*twod1-1] += t;
+    }
+}
+__global__ void peak_find(int *data, int *result, const int n){
+    int idx = blockDim.x*blockIdx.x+threadIdx.x;
+    if(idx < n-1 && idx > 0){
+        result[idx] = (data[idx]>data[idx-1]&&data[idx]>data[idx+1]) ?
+            1:0;
+    }
+}
+__global__ void result(int *data,int *result, const int n){
+    int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    if(idx < n-1 && idx > 0 && data[idx]<data[idx+1]){
+        result[data[idx]]=idx;
+    }
+}
 void exclusive_scan(int* device_data, int length)
 {
     /* TODO
@@ -43,12 +71,43 @@ void exclusive_scan(int* device_data, int length)
      * both the data array is sized to accommodate the next
      * power of 2 larger than the input.
      */
+    /*
+        完成这个函数，使用你的exclusive scan实现。
+        传递给你的数据位于设备内存中。
+        数据已初始化为输入。你的代码应该进行就地扫描，在同一个数组中生成结果。
+        这是主机代码——你需要声明一个或多个CUDA内核（使用__global__装饰器）以便在GPU上并行运行代码。
+        注意你得到了数组的实际长度，但可以假设数据数组的大小足以容纳大于输入的下一个的2的幂。
+    */
+    length = nextPow2(length);
+    dim3 blockDim = (256);
+    for(int twod = 1 ; twod < length ; twod *= 2){
+        int twod1 = twod*2;
+        // for(int i = 0 ; i < length ; i += twod1){
+        //     device_data[i+twod1-1] += device_data[i+twod-1];
+        // }
+        dim3 gridDim = (length/(twod*2) + blockDim.x - 1)/blockDim.x;
+        parallel_up<<<gridDim,blockDim>>>(device_data,length/twod1,twod1,twod);
+    }
+    cudaMemset(device_data + length - 1, 0, sizeof(int));
+    for(int twod = length / 2 ; twod >= 1 ; twod /= 2){
+        int twod1 = twod*2;
+        // for(int i = 0 ; i < length  ; i += twod1){
+        //     int t = device_data[i+twod-1];
+        //     device_data[i+twod-1] = device_data[i+twod1-1];
+        //     device_data[i+twod1-1] += t;
+        // }
+        dim3 gridDim = (length/(twod*2) + blockDim.x - 1)/blockDim.x;
+        parallel_dowm<<<gridDim,blockDim>>>(device_data,length/twod1,twod1,twod);
+    }
 }
-
 /* This function is a wrapper around the code you will write - it copies the
  * input to the GPU and times the invocation of the exclusive_scan() function
  * above. You should not modify it.
  */
+/*
+这个函数是你将编写的代码的包装器——它将输入复制到GPU并计时对上面的exclusive_scan()函数的调用。
+你不应该修改它。
+*/
 double cudaScan(int* inarray, int* end, int* resultarray)
 {
     int* device_data;
@@ -84,6 +143,11 @@ double cudaScan(int* inarray, int* end, int* resultarray)
  * You are not expected to produce competitive performance to the
  * Thrust version.
  */
+/*
+    Thrust库的独占扫描函数的包装器
+    如上所述，将输入复制到GPU上，并仅计时扫描本身的执行。
+    你不需要产生与Thrust版本竞争的性能。
+*/
 double cudaScanThrust(int* inarray, int* end, int* resultarray) {
 
     int length = end - inarray;
@@ -125,7 +189,24 @@ int find_peaks(int *device_input, int length, int *device_output) {
      * it requires that. However, you must ensure that the results of
      * find_peaks are correct given the original length.
      */
-    return 0;
+    /*
+        找出列表中大于前后元素的所有元素，并将该元素的索引存储到device_result中。
+        返回找到的峰值元素的数量。
+        根据定义，元素0和元素length-1都不是峰值。
+        你的任务是实现这个函数。你可能需要使用对exclusive_scan()的一个或多个调用，以及额外的CUDA内核启动。
+        注意：与扫描代码一样，我们确保分配的数组大小为2的幂，因此如果需要，你可以使用你的exclusive_scan函数。
+        但是，你必须确保find_peaks的结果是正确的，给定原始长度。
+    */
+    int roundlength = nextPow2(length), ans;
+    dim3 blockDim = (256);
+    dim3 gridDim = (length + blockDim.x - 1)/ blockDim.x;
+    int *tmp;
+    cudaMalloc(&tmp,roundlength*sizeof(int));
+    peak_find<<<gridDim,blockDim>>>(device_input,tmp,length);
+    exclusive_scan(tmp,roundlength);
+    result<<<gridDim,blockDim>>>(tmp,device_output,length);
+    cudaMemcpy(&ans,tmp+roundlength-1,sizeof(int),cudaMemcpyDeviceToHost);
+    return ans;
 }
 
 
