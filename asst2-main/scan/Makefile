@@ -11,9 +11,9 @@ all: $(EXECUTABLE)
 OBJDIR=objs
 CXX=g++ -m64
 CXXFLAGS=-O3 -Wall
-LDFLAGS=-L/usr/local/cuda-13.0/lib64/ -lcudart
+LDFLAGS=-L/usr/local/cuda-11.8/lib64/ -lcudart
 NVCC=nvcc
-NVCCFLAGS=-O3 -m64 -ccbin /usr/bin/gcc
+NVCCFLAGS=-O3 -m64 
 
 
 OBJS=$(OBJDIR)/main.o  $(OBJDIR)/scan.o

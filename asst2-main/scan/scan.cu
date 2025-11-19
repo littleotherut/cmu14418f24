@@ -29,34 +29,58 @@ static inline int nextPow2(int n)
     return n;
 }
 
-__global__ void parallel_up(int *data,const int n,const int twod1,const int twod){
-    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if(idx < n){
-        data[(idx+1)*twod1-1] += data[idx*twod1+twod-1];
+__global__ void prescan_block(int *output_global, int *input_global,int *block_sums, const int n){
+    extern __shared__ int temp[];
+
+    int tid = threadIdx.x;
+    int block_size = blockDim.x*2;
+    int blockOffset = blockIdx.x * block_size;
+    int offset = 1;
+
+    int idx1 = blockOffset + 2*tid, idx2 = blockOffset + 2*tid + 1;
+    temp[tid*2] = (idx1 < n) ? input_global[idx1] : 0;
+    temp[tid*2+1] = (idx2 < n) ? input_global[idx2] : 0;
+
+    for(int d = block_size >> 1 ; d > 0 ; d >>= 1){
+        __syncthreads();
+        if(tid < d){
+            int idx1 = offset * (2*tid+1) - 1;
+            int idx2 = offset * (2*tid+2) - 1;
+            temp[idx2] += temp[idx1];
+        }
+        offset *= 2;
     }
+    if(tid == 0){
+        if( block_sums != NULL )
+            block_sums[blockIdx.x] = temp[block_size-1];
+        temp[block_size-1]=0;
+    }
+    for(int i = 1 ; i < block_size ; i *= 2){
+        offset>>=1;
+        __syncthreads();
+        if(tid < i){
+            int idx1 = offset*(2*tid+1)-1;
+            int idx2 = offset*(2*tid+2)-1;
+            int t = temp[idx1];
+            temp[idx1] = temp[idx2];
+            temp[idx2] += t;
+        }
+    }
+    __syncthreads();
+    if(idx1 < n) output_global[idx1] = temp[2*tid];
+    if(idx2 < n) output_global[idx2] = temp[2*tid+1];
 }
 
-__global__ void parallel_dowm(int *data,const int n,const int twod1,const int twod){
-    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if(idx < n){
-        int t = data[idx*twod1+twod-1];
-        data[idx*twod1+twod-1] = data[(idx+1)*twod1-1];
-        data[(idx+1)*twod1-1] += t;
-    }
+__global__ void add_block_sums(int *output_global, int *block_sums, const int n){
+    const int block_offset = blockIdx.x * (blockDim.x * 2);
+    if(blockIdx.x == 0) return;
+
+    int add_val = block_sums[blockIdx.x]; // 每个块加上它之前的块的和
+    int idx1 = block_offset + 2*threadIdx.x, idx2 = block_offset + 2*threadIdx.x + 1;
+    if(idx1 < n) output_global[idx1] += add_val;
+    if(idx2 < n) output_global[idx2] += add_val;
 }
-__global__ void peak_find(int *data, int *result, const int n){
-    int idx = blockDim.x*blockIdx.x+threadIdx.x;
-    if(idx < n-1 && idx > 0){
-        result[idx] = (data[idx]>data[idx-1]&&data[idx]>data[idx+1]) ?
-            1:0;
-    }
-}
-__global__ void result(int *data,int *result, const int n){
-    int idx = blockDim.x * blockIdx.x + threadIdx.x;
-    if(idx < n-1 && idx > 0 && data[idx]<data[idx+1]){
-        result[data[idx]]=idx;
-    }
-}
+
 void exclusive_scan(int* device_data, int length)
 {
     /* TODO
@@ -80,25 +104,17 @@ void exclusive_scan(int* device_data, int length)
     */
     length = nextPow2(length);
     dim3 blockDim = (256);
-    for(int twod = 1 ; twod < length ; twod *= 2){
-        int twod1 = twod*2;
-        // for(int i = 0 ; i < length ; i += twod1){
-        //     device_data[i+twod1-1] += device_data[i+twod-1];
-        // }
-        dim3 gridDim = (length/(twod*2) + blockDim.x - 1)/blockDim.x;
-        parallel_up<<<gridDim,blockDim>>>(device_data,length/twod1,twod1,twod);
+    dim3 gridDim = ((length + blockDim.x * 2 - 1) / (blockDim.x * 2));
+    int *device_block_sums = nullptr;
+    if (gridDim.x > 1)
+        cudaMalloc(&device_block_sums, nextPow2(gridDim.x) * sizeof(int));
+    prescan_block<<<gridDim, blockDim, sizeof(int) * blockDim.x * 2>>>(device_data, device_data,
+                                                    device_block_sums, length);
+    if (gridDim.x > 1) {
+        exclusive_scan(device_block_sums, gridDim.x); // 递归处理区块和
+        add_block_sums<<<gridDim.x, blockDim>>>(device_data, device_block_sums, length); // 加上区块和
     }
-    cudaMemset(device_data + length - 1, 0, sizeof(int));
-    for(int twod = length / 2 ; twod >= 1 ; twod /= 2){
-        int twod1 = twod*2;
-        // for(int i = 0 ; i < length  ; i += twod1){
-        //     int t = device_data[i+twod-1];
-        //     device_data[i+twod-1] = device_data[i+twod1-1];
-        //     device_data[i+twod1-1] += t;
-        // }
-        dim3 gridDim = (length/(twod*2) + blockDim.x - 1)/blockDim.x;
-        parallel_dowm<<<gridDim,blockDim>>>(device_data,length/twod1,twod1,twod);
-    }
+    cudaFree(device_block_sums);
 }
 /* This function is a wrapper around the code you will write - it copies the
  * input to the GPU and times the invocation of the exclusive_scan() function
@@ -119,7 +135,11 @@ double cudaScan(int* inarray, int* end, int* resultarray)
     // non-power-of-2 inputs.
     int rounded_length = nextPow2(end - inarray);
     cudaMalloc((void **)&device_data, sizeof(int) * rounded_length);
-
+    // printf("Input: ");
+    // for(int i = 0 ; i < 10 ; i++){
+    //     printf("%d ",inarray[i]);
+    // }
+    // printf("\n");
     cudaMemcpy(device_data, inarray, (end - inarray) * sizeof(int),
                cudaMemcpyHostToDevice);
 
@@ -134,6 +154,12 @@ double cudaScan(int* inarray, int* end, int* resultarray)
 
     cudaMemcpy(resultarray, device_data, (end - inarray) * sizeof(int),
                cudaMemcpyDeviceToHost);
+    // printf("Output: ");
+    // for(int i = 0 ; i < 10 ; i++){
+    //     printf("%d ",resultarray[i]);
+    // }
+    // printf("\n");
+    // printf("%d\n",end-inarray);
     return overallDuration;
 }
 
@@ -172,7 +198,19 @@ double cudaScanThrust(int* inarray, int* end, int* resultarray) {
     return overallDuration;
 }
 
-
+__global__ void peak_find(int *data, int *result, const int n){
+    int idx = blockDim.x*blockIdx.x+threadIdx.x;
+    if(idx < n-1 && idx > 0){
+        result[idx] = (data[idx]>data[idx-1]&&data[idx]>data[idx+1]) ?
+            1:0;
+    }
+}
+__global__ void result(int *data,int *result, const int n){
+    int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    if(idx < n-1 && idx > 0 && data[idx]<data[idx+1]){
+        result[data[idx]]=idx;
+    }
+}
 
 int find_peaks(int *device_input, int length, int *device_output) {
     /* TODO:

@@ -5,5 +5,5 @@ Device 0: NVIDIA GeForce RTX 3050 Laptop GPU
    Global mem: 3746 MB
    CUDA Cap:   8.6
 ---------------------------------------------------------
-GPU_time: 0.053 ms
-Find_peaks outputs are correct!
+GPU_time: 1.803 ms
+Scan outputs are correct!
