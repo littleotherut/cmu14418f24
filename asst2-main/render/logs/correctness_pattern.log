@@ -1,0 +1,23 @@
+Rendering to 1150x1150 image
+Loaded scene with 1217 circles
+Loaded scene with 1217 circles
+---------------------------------------------------------
+Initializing CUDA for CudaRenderer
+Found 1 CUDA devices
+Device 0: NVIDIA GeForce RTX 3050 Laptop GPU
+   SMs:        16
+   Global mem: 3746 MB
+   CUDA Cap:   8.6
+---------------------------------------------------------
+WARNING: You're not running on a fast GPU, please consider using NVIDIA RTX 2080.
+---------------------------------------------------------
+
+Running benchmark, 1 frames, beginning at frame 0 ...
+Copying image data from device
+***************** Correctness check passed **************************
+Clear:    1.3729 ms
+Advance:  0.0051 ms
+Render:   143.4465 ms
+Total:    144.8245 ms
+
+Overall:  0.3104 sec (note units are seconds)

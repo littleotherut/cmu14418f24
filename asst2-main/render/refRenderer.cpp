@@ -48,6 +48,9 @@ RefRenderer::setup() {
 //
 // Allocate buffer the renderer will render into.  Check status of
 // image first to avoid memory leak.
+/*
+分配渲染器将渲染到的缓冲区。首先检查图像的状态以避免内存泄漏。
+*/
 void
 RefRenderer::allocOutputImage(int width, int height) {
 
@@ -60,6 +63,7 @@ RefRenderer::allocOutputImage(int width, int height) {
 //
 // Clear's the renderer's target image.  The state of the image after
 // the clear depends on the scene being rendered.
+// 清除渲染器的目标图像。清除后图像的状态取决于正在渲染的场景。
 void
 RefRenderer::clearImage() {
 
@@ -283,6 +287,14 @@ lookupColor(float coord, float& r, float& g, float& b) {
 // given pixel.  All values are provided in normalized space, where
 // the screen spans [0,2]^2.  The color/opacity of the circle is
 // computed at the pixel center.
+/*
+    计算指定圆对给定像素的贡献。所有值都在归一化空间中提供，其中屏幕跨越[0,2]^2。
+    在像素中心计算圆的颜色/不透明度。
+    pixelCenterX, pixelCenterY: 像素中心的归一化坐标
+    px, py, pz: 圆心的归一化坐标
+    pixelData: 指向图像中像素数据的指针
+    circleIndex: 圆的索引
+*/
 void
 RefRenderer::shadePixel(
     float pixelCenterX, float pixelCenterY,
@@ -386,6 +398,10 @@ RefRenderer::render() {
         // the function shadePixel.  Since the circle does not fill
         // the bounding box entirely, not every pixel in the box will
         // receive contribution.
+        /*
+            对边界框内的每个像素，确定圆对像素的贡献。贡献在函数shadePixel中计算。
+            由于圆并不完全填充边界框，因此框中的每个像素都不会收到贡献。
+        */
         for (int pixelY=screenMinY; pixelY<screenMaxY; pixelY++) {
 
             // pointer to pixel data
@@ -401,6 +417,11 @@ RefRenderer::render() {
                 // normalized [0,1]^2 coordinate space, so we convert
                 // the pixel center into this coordinate space prior
                 // to calling shadePixel.
+                /*
+                    在“着色”像素时（“着色”=计算圆在像素处的颜色和不透明度），我们将像素视为像素中心的一个点。
+                    我们将在这个点计算圆的颜色。请注意，着色数学将在归一化的[0,1]^2坐标空间中进行，
+                    因此在调用shadePixel之前，我们将像素中心转换到该坐标空间。
+                */
                 float pixelCenterNormX = invWidth * (static_cast<float>(pixelX) + 0.5f);
                 float pixelCenterNormY = invHeight * (static_cast<float>(pixelY) + 0.5f);
                 shadePixel(pixelCenterNormX, pixelCenterNormY, px, py, pz, imgPtr,circleIndex);

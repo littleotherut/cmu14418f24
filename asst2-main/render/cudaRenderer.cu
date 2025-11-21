@@ -44,21 +44,34 @@ struct GlobalConstants {
 // be stored in special "constant" memory on the GPU. (we didn't talk
 // about this type of memory in class, but constant memory is a fast
 // place to put read-only variables).
+/*
+    全局变量，在所有cuda内核中都是只读的。__constant__修饰符表示该变量将存储在GPU上的特殊“常量”内存中。
+    （我们在课堂上没有讨论过这种类型的内存，但常量内存是放置只读变量的快速位置）。
+*/
 __constant__ GlobalConstants cuConstRendererParams;
 
 // Read-only lookup tables used to quickly compute noise (needed by
 // advanceAnimation for the snowflake scene)
+/* 
+    只读查找表，用于快速计算噪声（advanceAnimation需要用于雪花场景）
+*/
 __constant__ int    cuConstNoiseYPermutationTable[256];
 __constant__ int    cuConstNoiseXPermutationTable[256];
 __constant__ float  cuConstNoise1DValueTable[256];
 
 // Color ramp table needed for the color ramp lookup shader
+/* 
+    颜色渐变表需要用于颜色渐变查找着色器
+*/
 #define COLOR_MAP_SIZE 5
 __constant__ float  cuConstColorRamp[COLOR_MAP_SIZE][3];
 
 
 // Include parts of the CUDA code from external files to keep this
 // file simpler and to seperate code that should not be modified
+/*
+    从外部文件包含CUDA代码的部分，以使该文件更简单，并分离不应修改的代码
+*/
 #include "noiseCuda.cu_inl"
 #include "lookupColor.cu_inl"
 
@@ -67,6 +80,9 @@ __constant__ float  cuConstColorRamp[COLOR_MAP_SIZE][3];
 //
 // Clear the image, setting the image to the white-gray gradation that
 // is used in the snowflake image
+/*
+    清除图像，将图像设置为雪花图像中使用的白灰渐变
+*/
 __global__ void kernelClearImageSnowflake() {
 
     int imageX = blockIdx.x * blockDim.x + threadIdx.x;
@@ -85,12 +101,18 @@ __global__ void kernelClearImageSnowflake() {
     // Write to global memory: As an optimization, this code uses a float4
     // store, which results in more efficient code than if it were coded as
     // four separate float stores.
+    /*
+        写入全局内存：作为一种优化，此代码使用float4存储，这比将其编码为四个单独的float存储更有效。
+    */
     *(float4*)(&cuConstRendererParams.imageData[offset]) = value;
 }
 
 // kernelClearImage --  (CUDA device code)
 //
 // Clear the image, setting all pixels to the specified color rgba
+/*
+    清除图像，将所有像素设置为指定的颜色rgba
+*/
 __global__ void kernelClearImage(float r, float g, float b, float a) {
 
     int imageX = blockIdx.x * blockDim.x + threadIdx.x;
@@ -114,6 +136,9 @@ __global__ void kernelClearImage(float r, float g, float b, float a) {
 // kernelAdvanceFireWorks
 // 
 // Update positions of fireworks
+/*
+    更新烟花的位置
+*/
 __global__ void kernelAdvanceFireWorks() {
     const float dt = 1.f / 60.f;
     const float pi = M_PI;
@@ -132,11 +157,12 @@ __global__ void kernelAdvanceFireWorks() {
     }
 
     // Determine the firework center/spark indices
+    // 确定烟花中心/火花索引
     int fIdx = (index - NUM_FIREWORKS) / NUM_SPARKS;
     int sfIdx = (index - NUM_FIREWORKS) % NUM_SPARKS;
 
     int index3i = 3 * fIdx;
-    int sIdx = NUM_FIREWORKS + fIdx * NUM_SPARKS + sfIdx;
+    int sIdx = NUM_FIREWORKS + fIdx * NUM_SPARKS + sfIdx; 
     int index3j = 3 * sIdx;
 
     float cx = position[index3i];
@@ -178,6 +204,9 @@ __global__ void kernelAdvanceFireWorks() {
 // kernelAdvanceHypnosis   
 //
 // Update the radius/color of the circles
+/*
+    更新圆的半径/颜色
+*/
 __global__ void kernelAdvanceHypnosis() { 
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     if (index >= cuConstRendererParams.numberOfCircles) 
@@ -198,6 +227,9 @@ __global__ void kernelAdvanceHypnosis() {
 // kernelAdvanceBouncingBalls
 // 
 // Update the position of the balls
+/*
+    更新球的位置
+*/
 __global__ void kernelAdvanceBouncingBalls() { 
     const float dt = 1.f / 60.f;
     const float kGravity = -2.8f; // sorry Newton
@@ -244,6 +276,9 @@ __global__ void kernelAdvanceBouncingBalls() {
 // Move the snowflake animation forward one time step.  Update circle
 // positions and velocities.  Note how the position of the snowflake
 // is reset if it moves off the left, right, or bottom of the screen.
+/*
+    将雪花动画向前移动一个时间步长。更新圆的位置和速度。注意如果雪花移出屏幕的左侧、右侧或底部，雪花的位置将被重置。
+*/
 __global__ void kernelAdvanceSnowflake() {
 
     int index = blockIdx.x * blockDim.x + threadIdx.x;
@@ -323,6 +358,9 @@ __global__ void kernelAdvanceSnowflake() {
 // Given a pixel and a circle, determine the contribution to the
 // pixel from the circle.  Update of the image is done in this
 // function.  Called by kernelRenderCircles()
+/*
+    给定一个像素和一个圆，确定圆对像素的贡献。图像的更新在此函数中完成。由kernelRenderCircles()调用
+*/
 __device__ __inline__ void
 shadePixel(float2 pixelCenter, float3 p, float4* imagePtr, int circleIndex) {
 
@@ -334,6 +372,7 @@ shadePixel(float2 pixelCenter, float3 p, float4* imagePtr, int circleIndex) {
     float maxDist = rad * rad;
 
     // Circle does not contribute to the image
+    // 如果圆不对图像做出贡献
     if (pixelDist > maxDist)
         return;
 
@@ -348,6 +387,10 @@ shadePixel(float2 pixelCenter, float3 p, float4* imagePtr, int circleIndex) {
     // would be wise to perform this logic outside of the loops in
     // kernelRenderCircles.  (If feeling good about yourself, you
     // could use some specialized template magic).
+    /*
+        这是内循环中的条件。虽然它对所有线程的评估结果相同，但在设置通道掩码等以实现条件时会有开销。
+        明智的做法是在kernelRenderCircles中的循环之外执行此逻辑。（如果觉得自己不错，可以使用一些专门的模板魔法）。
+    */
     if (cuConstRendererParams.sceneName == SNOWFLAKES || cuConstRendererParams.sceneName == SNOWFLAKES_SINGLE_FRAME) {
 
         const float kCircleMaxAlpha = .5f;
@@ -390,45 +433,79 @@ shadePixel(float2 pixelCenter, float3 p, float4* imagePtr, int circleIndex) {
 // Each thread renders a circle.  Since there is no protection to
 // ensure order of update or mutual exclusion on the output image, the
 // resulting image will be incorrect.
-__global__ void kernelRenderCircles() {
+/*
+    每个线程渲染一个圆。由于没有保护来确保输出图像的更新顺序或互斥，因此生成的图像将不正确。
+*/
+// __global__ void kernelRenderCircles() {
 
-    int index = blockIdx.x * blockDim.x + threadIdx.x;
+//     int index = blockIdx.x * blockDim.x + threadIdx.x;
 
-    if (index >= cuConstRendererParams.numberOfCircles)
-        return;
+//     if (index >= cuConstRendererParams.numberOfCircles)
+//         return;
 
-    int index3 = 3 * index;
+//     int index3 = 3 * index;
 
-    // Read position and radius
-    float3 p = *(float3*)(&cuConstRendererParams.position[index3]);
-    float  rad = cuConstRendererParams.radius[index];
+//     // Read position and radius
+//     float3 p = *(float3*)(&cuConstRendererParams.position[index3]);
+//     float  rad = cuConstRendererParams.radius[index];
 
-    // Compute the bounding box of the circle. The bound is in integer
-    // screen coordinates, so it's clamped to the edges of the screen.
+//     // Compute the bounding box of the circle. The bound is in integer
+//     // screen coordinates, so it's clamped to the edges of the screen.
+//     /*
+//         计算圆的边界框。该边界以整数屏幕坐标表示，因此它被限制在屏幕的边缘。
+//     */
+//     short imageWidth = cuConstRendererParams.imageWidth;
+//     short imageHeight = cuConstRendererParams.imageHeight;
+//     short minX = static_cast<short>(imageWidth * (p.x - rad));
+//     short maxX = static_cast<short>(imageWidth * (p.x + rad)) + 1;
+//     short minY = static_cast<short>(imageHeight * (p.y - rad));
+//     short maxY = static_cast<short>(imageHeight * (p.y + rad)) + 1;
+
+//     // A bunch of clamps.  Is there a CUDA built-in for this?
+//     // 一些夹具。CUDA内置有这个吗？
+//     short screenMinX = (minX > 0) ? ((minX < imageWidth) ? minX : imageWidth) : 0;
+//     short screenMaxX = (maxX > 0) ? ((maxX < imageWidth) ? maxX : imageWidth) : 0;
+//     short screenMinY = (minY > 0) ? ((minY < imageHeight) ? minY : imageHeight) : 0;
+//     short screenMaxY = (maxY > 0) ? ((maxY < imageHeight) ? maxY : imageHeight) : 0;
+
+//     float invWidth = 1.f / imageWidth;
+//     float invHeight = 1.f / imageHeight;
+
+//     // For all pixels in the bounding box
+//     // 所有边界框内的像素
+//     for (int pixelY=screenMinY; pixelY<screenMaxY; pixelY++) {
+//         float4* imgPtr = (float4*)(&cuConstRendererParams.imageData[4 * (pixelY * imageWidth + screenMinX)]);
+//         for (int pixelX=screenMinX; pixelX<screenMaxX; pixelX++) {
+//             float2 pixelCenterNorm = make_float2(invWidth * (static_cast<float>(pixelX) + 0.5f),
+//                                                  invHeight * (static_cast<float>(pixelY) + 0.5f));
+//             shadePixel(pixelCenterNorm, p, imgPtr, index);
+//             imgPtr++;
+//         }
+//     }
+// }
+
+__global__ void kernelRenderTiling(){
+    int pos_x = blockIdx.x * blockDim.x + threadIdx.x;
+    int pos_y = blockIdx.y * blockDim.y + threadIdx.y;
     short imageWidth = cuConstRendererParams.imageWidth;
     short imageHeight = cuConstRendererParams.imageHeight;
-    short minX = static_cast<short>(imageWidth * (p.x - rad));
-    short maxX = static_cast<short>(imageWidth * (p.x + rad)) + 1;
-    short minY = static_cast<short>(imageHeight * (p.y - rad));
-    short maxY = static_cast<short>(imageHeight * (p.y + rad)) + 1;
-
-    // A bunch of clamps.  Is there a CUDA built-in for this?
-    short screenMinX = (minX > 0) ? ((minX < imageWidth) ? minX : imageWidth) : 0;
-    short screenMaxX = (maxX > 0) ? ((maxX < imageWidth) ? maxX : imageWidth) : 0;
-    short screenMinY = (minY > 0) ? ((minY < imageHeight) ? minY : imageHeight) : 0;
-    short screenMaxY = (maxY > 0) ? ((maxY < imageHeight) ? maxY : imageHeight) : 0;
-
+    if(pos_x >= imageWidth || pos_y >= imageHeight) return;
     float invWidth = 1.f / imageWidth;
     float invHeight = 1.f / imageHeight;
+    for(int i = 0 ; i < cuConstRendererParams.numberOfCircles ; ++ i){
+        float3 p = *(float3*)(&cuConstRendererParams.position[i*3]);
+        float rad = cuConstRendererParams.radius[i];
 
-    // For all pixels in the bounding box
-    for (int pixelY=screenMinY; pixelY<screenMaxY; pixelY++) {
-        float4* imgPtr = (float4*)(&cuConstRendererParams.imageData[4 * (pixelY * imageWidth + screenMinX)]);
-        for (int pixelX=screenMinX; pixelX<screenMaxX; pixelX++) {
-            float2 pixelCenterNorm = make_float2(invWidth * (static_cast<float>(pixelX) + 0.5f),
-                                                 invHeight * (static_cast<float>(pixelY) + 0.5f));
-            shadePixel(pixelCenterNorm, p, imgPtr, index);
-            imgPtr++;
+        short minX = static_cast<short>(imageWidth * (p.x - rad));
+        short maxX = static_cast<short>(imageWidth * (p.x + rad)) + 1;
+        short minY = static_cast<short>(imageHeight * (p.y - rad));
+        short maxY = static_cast<short>(imageHeight * (p.y + rad)) + 1;
+
+        if(pos_x >= minX && pos_x <= maxX && pos_y >= minY && pos_y <= maxY){
+            float4* imgPtr = (float4*)(&cuConstRendererParams.imageData[4 * (pos_y * imageWidth + pos_x)]);
+            float2 pixelCenterNorm = make_float2(invWidth * (static_cast<float>(pos_x) + 0.5f),
+                                                 invHeight * (static_cast<float>(pos_y) + 0.5f));
+            shadePixel(pixelCenterNorm, p, imgPtr, i);
         }
     }
 }
@@ -599,6 +676,9 @@ CudaRenderer::setup() {
 //
 // Allocate buffer the renderer will render into.  Check status of
 // image first to avoid memory leak.
+/*
+    分配渲染器将渲染到的缓冲区。首先检查图像的状态以避免内存泄漏。
+*/
 void
 CudaRenderer::allocOutputImage(int width, int height) {
 
@@ -611,6 +691,9 @@ CudaRenderer::allocOutputImage(int width, int height) {
 //
 // Clear the renderer's target image.  The state of the image after
 // the clear depends on the scene being rendered.
+/*
+    清除渲染器的目标图像。清除后图像的状态取决于正在渲染的场景。
+*/
 void
 CudaRenderer::clearImage() {
 
@@ -632,6 +715,10 @@ CudaRenderer::clearImage() {
 //
 // Advance the simulation one time step.  Updates all circle positions
 // and velocities
+/*
+    优化动画--
+    将模拟向前推进一个时间步长。更新所有圆的位置和速度
+*/
 void
 CudaRenderer::advanceAnimation() {
      // 256 threads per block is a healthy number
@@ -651,12 +738,21 @@ CudaRenderer::advanceAnimation() {
     cudaDeviceSynchronize();
 }
 
-void
-CudaRenderer::render() {
-    // 256 threads per block is a healthy number
-    dim3 blockDim(256, 1);
-    dim3 gridDim((numberOfCircles + blockDim.x - 1) / blockDim.x);
+// void
+// CudaRenderer::render() {
+//     // 256 threads per block is a healthy number
+//     dim3 blockDim(256, 1);
+//     dim3 gridDim((numberOfCircles + blockDim.x - 1) / blockDim.x);
 
-    kernelRenderCircles<<<gridDim, blockDim>>>();
+//     kernelRenderCircles<<<gridDim, blockDim>>>();
+//     cudaDeviceSynchronize();
+// }
+void CudaRenderer::render(){
+    dim3 blockDim(16,16);
+    dim3 gridDim(
+        (image->width + blockDim.x - 1) / blockDim.x,
+        (image->height + blockDim.y - 1) / blockDim.y
+    );
+    kernelRenderTiling<<<gridDim,blockDim>>>();
     cudaDeviceSynchronize();
 }
