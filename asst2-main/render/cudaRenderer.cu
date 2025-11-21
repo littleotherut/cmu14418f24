@@ -361,14 +361,14 @@ __global__ void kernelAdvanceSnowflake() {
 /*
     给定一个像素和一个圆，确定圆对像素的贡献。图像的更新在此函数中完成。由kernelRenderCircles()调用
 */
-__device__ __inline__ void
-shadePixel(float2 pixelCenter, float3 p, float4* imagePtr, int circleIndex) {
+__device__ __inline__ void shadePixel(float2 pixelCenter, float3 p, float4* imagePtr, const float smem_radius,const float3 smem_color) {
+
 
     float diffX = p.x - pixelCenter.x;
     float diffY = p.y - pixelCenter.y;
     float pixelDist = diffX * diffX + diffY * diffY;
 
-    float rad = cuConstRendererParams.radius[circleIndex];;
+    float rad = smem_radius;
     float maxDist = rad * rad;
 
     // Circle does not contribute to the image
@@ -405,8 +405,7 @@ shadePixel(float2 pixelCenter, float3 p, float4* imagePtr, int circleIndex) {
 
     } else {
         // Simple: each circle has an assigned color
-        int index3 = 3 * circleIndex;
-        rgb = *(float3*)&(cuConstRendererParams.color[index3]);
+        rgb = smem_color;
         alpha = .5f;
     }
 
@@ -428,85 +427,57 @@ shadePixel(float2 pixelCenter, float3 p, float4* imagePtr, int circleIndex) {
     // END SHOULD-BE-ATOMIC REGION
 }
 
-// kernelRenderCircles -- (CUDA device code)
-//
-// Each thread renders a circle.  Since there is no protection to
-// ensure order of update or mutual exclusion on the output image, the
-// resulting image will be incorrect.
-/*
-    每个线程渲染一个圆。由于没有保护来确保输出图像的更新顺序或互斥，因此生成的图像将不正确。
-*/
-// __global__ void kernelRenderCircles() {
-
-//     int index = blockIdx.x * blockDim.x + threadIdx.x;
-
-//     if (index >= cuConstRendererParams.numberOfCircles)
-//         return;
-
-//     int index3 = 3 * index;
-
-//     // Read position and radius
-//     float3 p = *(float3*)(&cuConstRendererParams.position[index3]);
-//     float  rad = cuConstRendererParams.radius[index];
-
-//     // Compute the bounding box of the circle. The bound is in integer
-//     // screen coordinates, so it's clamped to the edges of the screen.
-//     /*
-//         计算圆的边界框。该边界以整数屏幕坐标表示，因此它被限制在屏幕的边缘。
-//     */
-//     short imageWidth = cuConstRendererParams.imageWidth;
-//     short imageHeight = cuConstRendererParams.imageHeight;
-//     short minX = static_cast<short>(imageWidth * (p.x - rad));
-//     short maxX = static_cast<short>(imageWidth * (p.x + rad)) + 1;
-//     short minY = static_cast<short>(imageHeight * (p.y - rad));
-//     short maxY = static_cast<short>(imageHeight * (p.y + rad)) + 1;
-
-//     // A bunch of clamps.  Is there a CUDA built-in for this?
-//     // 一些夹具。CUDA内置有这个吗？
-//     short screenMinX = (minX > 0) ? ((minX < imageWidth) ? minX : imageWidth) : 0;
-//     short screenMaxX = (maxX > 0) ? ((maxX < imageWidth) ? maxX : imageWidth) : 0;
-//     short screenMinY = (minY > 0) ? ((minY < imageHeight) ? minY : imageHeight) : 0;
-//     short screenMaxY = (maxY > 0) ? ((maxY < imageHeight) ? maxY : imageHeight) : 0;
-
-//     float invWidth = 1.f / imageWidth;
-//     float invHeight = 1.f / imageHeight;
-
-//     // For all pixels in the bounding box
-//     // 所有边界框内的像素
-//     for (int pixelY=screenMinY; pixelY<screenMaxY; pixelY++) {
-//         float4* imgPtr = (float4*)(&cuConstRendererParams.imageData[4 * (pixelY * imageWidth + screenMinX)]);
-//         for (int pixelX=screenMinX; pixelX<screenMaxX; pixelX++) {
-//             float2 pixelCenterNorm = make_float2(invWidth * (static_cast<float>(pixelX) + 0.5f),
-//                                                  invHeight * (static_cast<float>(pixelY) + 0.5f));
-//             shadePixel(pixelCenterNorm, p, imgPtr, index);
-//             imgPtr++;
-//         }
-//     }
-// }
-
 __global__ void kernelRenderTiling(){
-    int pos_x = blockIdx.x * blockDim.x + threadIdx.x;
-    int pos_y = blockIdx.y * blockDim.y + threadIdx.y;
-    short imageWidth = cuConstRendererParams.imageWidth;
-    short imageHeight = cuConstRendererParams.imageHeight;
-    if(pos_x >= imageWidth || pos_y >= imageHeight) return;
-    float invWidth = 1.f / imageWidth;
-    float invHeight = 1.f / imageHeight;
-    for(int i = 0 ; i < cuConstRendererParams.numberOfCircles ; ++ i){
-        float3 p = *(float3*)(&cuConstRendererParams.position[i*3]);
-        float rad = cuConstRendererParams.radius[i];
+    extern __shared__ unsigned char shared[];
+    const int tileCapacity = blockDim.x * blockDim.y;
+    float3 *smem_position = reinterpret_cast<float3*>(shared);
+    float  *smem_radius   = reinterpret_cast<float*>(smem_position + tileCapacity);
+    float3 *smem_color    = reinterpret_cast<float3*>(smem_radius + tileCapacity);
 
-        short minX = static_cast<short>(imageWidth * (p.x - rad));
-        short maxX = static_cast<short>(imageWidth * (p.x + rad)) + 1;
-        short minY = static_cast<short>(imageHeight * (p.y - rad));
-        short maxY = static_cast<short>(imageHeight * (p.y + rad)) + 1;
-
-        if(pos_x >= minX && pos_x <= maxX && pos_y >= minY && pos_y <= maxY){
-            float4* imgPtr = (float4*)(&cuConstRendererParams.imageData[4 * (pos_y * imageWidth + pos_x)]);
-            float2 pixelCenterNorm = make_float2(invWidth * (static_cast<float>(pos_x) + 0.5f),
-                                                 invHeight * (static_cast<float>(pos_y) + 0.5f));
-            shadePixel(pixelCenterNorm, p, imgPtr, i);
+    const int idx = blockDim.x * threadIdx.y + threadIdx.x;
+    const int num = cuConstRendererParams.numberOfCircles;
+    
+    const int pos_x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int pos_y = blockIdx.y * blockDim.y + threadIdx.y;
+    const int imageWidth = cuConstRendererParams.imageWidth;
+    const int imageHeight = cuConstRendererParams.imageHeight;
+    
+    const float invWidth = 1.f / imageWidth;
+    const float invHeight = 1.f / imageHeight;
+    const float2 pixelCenterNorm = make_float2(invWidth * (static_cast<float>(pos_x) + 0.5f),
+                                    invHeight * (static_cast<float>(pos_y) + 0.5f));
+    
+    const bool validPixel = (pos_x < imageWidth && pos_y < imageHeight);
+    
+    for(int base = 0 ; base < num ; base += tileCapacity){
+        const int circleIdx = base + idx;
+        if(circleIdx < num){
+            smem_position[idx] = *(float3*)(&cuConstRendererParams.position[circleIdx*3]);
+            smem_radius[idx] = cuConstRendererParams.radius[circleIdx];
+            smem_color[idx] = *(float3*)&(cuConstRendererParams.color[circleIdx*3]);
         }
+        __syncthreads();
+        
+        const int batchSize = min(tileCapacity, num - base);
+        if(validPixel) {
+            for(int i = 0 ; i < batchSize ; ++ i){
+                const float3 p = smem_position[i];
+                const float rad = smem_radius[i];
+
+                const int minX = static_cast<int>(imageWidth * (p.x - rad));
+                const int maxX = static_cast<int>(imageWidth * (p.x + rad)) + 1;
+                const int minY = static_cast<int>(imageHeight * (p.y - rad));
+                const int maxY = static_cast<int>(imageHeight * (p.y + rad)) + 1;
+
+                if (pos_x < minX || pos_x >= maxX || pos_y < minY || pos_y >= maxY)
+                    continue;
+                    
+                float4* imgPtr = (float4*)(
+                    &cuConstRendererParams.imageData[4 * (pos_y * imageWidth + pos_x)]);
+                shadePixel(pixelCenterNorm, p, imgPtr, smem_radius[i], smem_color[i]);
+            }
+        }
+        __syncthreads();
     }
 }
 
@@ -738,21 +709,13 @@ CudaRenderer::advanceAnimation() {
     cudaDeviceSynchronize();
 }
 
-// void
-// CudaRenderer::render() {
-//     // 256 threads per block is a healthy number
-//     dim3 blockDim(256, 1);
-//     dim3 gridDim((numberOfCircles + blockDim.x - 1) / blockDim.x);
-
-//     kernelRenderCircles<<<gridDim, blockDim>>>();
-//     cudaDeviceSynchronize();
-// }
 void CudaRenderer::render(){
     dim3 blockDim(16,16);
     dim3 gridDim(
         (image->width + blockDim.x - 1) / blockDim.x,
         (image->height + blockDim.y - 1) / blockDim.y
     );
-    kernelRenderTiling<<<gridDim,blockDim>>>();
+    const int blockSize = blockDim.x*blockDim.y;
+    kernelRenderTiling<<<gridDim,blockDim,blockSize*(sizeof(float3)*2+sizeof(float))>>>();
     cudaDeviceSynchronize();
 }

@@ -176,7 +176,13 @@ __global__ void kernelRenderTiling(){
 }
 
 __global__ void kernelAdvanceSnowflakes(){
+    int pos_x = blockIdx.x * blockDim.x + threadIdx.x;
+    int pos_y = blockIdx.y * blockDim.y + threadIdx.y;
+    const float dt = 1.f/60.f;
+    const float kGravity = -1.8f;
+    const float kDragCoeff = 2.f;
 
+    
 }
 
 __global__ void kernelAdvanceBouncingBalls(){
