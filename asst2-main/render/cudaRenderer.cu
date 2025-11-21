@@ -13,6 +13,7 @@
 
 #include <thrust/scan.h>
 #include <thrust/device_ptr.h>
+#include <thrust/sort.h>
 
 #include "cudaRenderer.h"
 #include "image.h"
@@ -69,7 +70,7 @@ __constant__ float  cuConstNoise1DValueTable[256];
 #define COLOR_MAP_SIZE 5
 __constant__ float  cuConstColorRamp[COLOR_MAP_SIZE][3];
 
-
+const int TILE_SIZE = 2;
 // Include parts of the CUDA code from external files to keep this
 // file simpler and to seperate code that should not be modified
 /*
@@ -428,60 +429,6 @@ __device__ __inline__ void shadePixel(float2 pixelCenter, float3 p, float4* imag
     // END SHOULD-BE-ATOMIC REGION
 }
 
-__global__ void kernelRenderTiling(){
-    extern __shared__ unsigned char shared[];
-    const int tileCapacity = blockDim.x * blockDim.y;
-    float3 *smem_position = reinterpret_cast<float3*>(shared);
-    float  *smem_radius   = reinterpret_cast<float*>(smem_position + tileCapacity);
-    float3 *smem_color    = reinterpret_cast<float3*>(smem_radius + tileCapacity);
-
-    const int idx = blockDim.x * threadIdx.y + threadIdx.x;
-    const int num = cuConstRendererParams.numberOfCircles;
-    
-    const int pos_x = blockIdx.x * blockDim.x + threadIdx.x;
-    const int pos_y = blockIdx.y * blockDim.y + threadIdx.y;
-    const int imageWidth = cuConstRendererParams.imageWidth;
-    const int imageHeight = cuConstRendererParams.imageHeight;
-    
-    const float invWidth = 1.f / imageWidth;
-    const float invHeight = 1.f / imageHeight;
-    const float2 pixelCenterNorm = make_float2(invWidth * (static_cast<float>(pos_x) + 0.5f),
-                                    invHeight * (static_cast<float>(pos_y) + 0.5f));
-    
-    const bool validPixel = (pos_x < imageWidth && pos_y < imageHeight);
-    
-    for(int base = 0 ; base < num ; base += tileCapacity){
-        const int circleIdx = base + idx;
-        if(circleIdx < num){
-            smem_position[idx] = *(float3*)(&cuConstRendererParams.position[circleIdx*3]);
-            smem_radius[idx] = cuConstRendererParams.radius[circleIdx];
-            smem_color[idx] = *(float3*)&(cuConstRendererParams.color[circleIdx*3]);
-        }
-        __syncthreads();
-        
-        const int batchSize = min(tileCapacity, num - base);
-        if(validPixel) {
-            for(int i = 0 ; i < batchSize ; ++ i){
-                const float3 p = smem_position[i];
-                const float rad = smem_radius[i];
-
-                const int minX = static_cast<int>(imageWidth * (p.x - rad));
-                const int maxX = static_cast<int>(imageWidth * (p.x + rad)) + 1;
-                const int minY = static_cast<int>(imageHeight * (p.y - rad));
-                const int maxY = static_cast<int>(imageHeight * (p.y + rad)) + 1;
-
-                if (pos_x < minX || pos_x >= maxX || pos_y < minY || pos_y >= maxY)
-                    continue;
-                    
-                float4* imgPtr = (float4*)(
-                    &cuConstRendererParams.imageData[4 * (pos_y * imageWidth + pos_x)]);
-                shadePixel(pixelCenterNorm, p, imgPtr, smem_radius[i], smem_color[i]);
-            }
-        }
-        __syncthreads();
-    }
-}
-
 __device__ __forceinline__ void circleTileRange(float3 p, float r,
                                                 int tilesX, int tilesY,
                                                 int& minTileX, int& maxTileX,
@@ -543,52 +490,57 @@ __global__ void kernelFillTileList(int tilesX, int tilesY,
             tileCircleList[tileOffsets[tileId] + slot] = circle;
         }
 }
-/*
-    kernelSortTileLists -- (CUDA device code)
-    对每个tile中的圆索引列表进行排序。
-    这是为了解决atomicAdd导致的乱序问题，确保半透明渲染的正确性（Painter's Algorithm）。
-    使用并行奇偶转置排序。
-*/
+// 改进的排序 kernel - 使用稳定的并行冒泡排序
 __global__ void kernelSortTileLists(int tilesX, int tilesY, 
                                     const int* tileCounts, 
                                     const int* tileOffsets, 
                                     int* tileCircleList) {
-    // 每个block处理一个tile
     int tileId = blockIdx.x; 
     if (tileId >= tilesX * tilesY) return;
 
     int count = tileCounts[tileId];
-    if (count <= 1) return; // 不需要排序
+    if (count <= 1) return;
 
     int offset = tileOffsets[tileId];
     
-    // 奇偶排序 (Odd-Even Transposition Sort)
-    // 外部循环控制排序轮数，内部由线程并行比较交换
-    
+    // 使用共享内存加速排序（如果数量不大）
+    extern __shared__ int sharedList[];
     int tid = threadIdx.x;
-    int numThreads = blockDim.x;
-
-    // 简单的并行冒泡/奇偶排序逻辑
-    // 需要 count 轮
-    for (int i = 0; i < count; ++i) {
-        // 奇数轮和偶数轮交替
-        int start = (i % 2 == 1) ? 1 : 0;
-        
-        // 每个线程处理多个元素（如果 count > blockDim）
-        for (int j = start + 2 * tid; j < count - 1; j += 2 * numThreads) {
-            int idxA = offset + j;
-            int idxB = offset + j + 1;
-            
-            int valA = tileCircleList[idxA];
-            int valB = tileCircleList[idxB];
-            
-            if (valA > valB) {
-                // 交换
-                tileCircleList[idxA] = valB;
-                tileCircleList[idxB] = valA;
+    
+    // 加载到共享内存
+    for (int i = tid; i < count; i += blockDim.x) {
+        sharedList[i] = tileCircleList[offset + i];
+    }
+    __syncthreads();
+    
+    // 并行冒泡排序 - 更可靠的实现
+    for (int phase = 0; phase < count; ++phase) {
+        // 奇数相位：比较 (0,1), (2,3), (4,5)...
+        if (phase % 2 == 0) {
+            for (int i = 2 * tid; i < count - 1; i += 2 * blockDim.x) {
+                if (sharedList[i] > sharedList[i + 1]) {
+                    int temp = sharedList[i];
+                    sharedList[i] = sharedList[i + 1];
+                    sharedList[i + 1] = temp;
+                }
             }
         }
-        __syncthreads(); // 等待所有线程完成本轮交换
+        // 偶数相位：比较 (1,2), (3,4), (5,6)...
+        else {
+            for (int i = 2 * tid + 1; i < count - 1; i += 2 * blockDim.x) {
+                if (sharedList[i] > sharedList[i + 1]) {
+                    int temp = sharedList[i];
+                    sharedList[i] = sharedList[i + 1];
+                    sharedList[i + 1] = temp;
+                }
+            }
+        }
+        __syncthreads();
+    }
+    
+    // 写回全局内存
+    for (int i = tid; i < count; i += blockDim.x) {
+        tileCircleList[offset + i] = sharedList[i];
     }
 }
 
@@ -830,7 +782,6 @@ CudaRenderer::setup() {
     cudaMemcpyToSymbol(cuConstColorRamp, lookupTable, sizeof(float) * 3 * COLOR_MAP_SIZE);
 
     // 计算 tile 数量（假设每个 tile 是 16x16）
-    const int TILE_SIZE = 16;
     tilesX = (image->width + TILE_SIZE - 1) / TILE_SIZE;
     tilesY = (image->height + TILE_SIZE - 1) / TILE_SIZE;
     totalTiles = tilesX * tilesY;
@@ -885,12 +836,30 @@ void CudaRenderer::buildTileBins() {
         cudaDeviceTileOffsets, cudaDeviceTileWritePtr, cudaDeviceTileCircleList);
     cudaDeviceSynchronize();
 
-    int numTiles = tilesX * tilesY;
-    // 使用 256 个线程来并行排序每个 Tile 内部的列表
-    kernelSortTileLists<<<numTiles, 256>>>(
-        tilesX, tilesY, 
-        cudaDeviceTileCounts, cudaDeviceTileOffsets, cudaDeviceTileCircleList
-    );
+    // int numTiles = tilesX * tilesY;
+    // // 使用 256 个线程来并行排序每个 Tile 内部的列表
+    // kernelSortTileLists<<<numTiles, 256>>>(
+    //     tilesX, tilesY, 
+    //     cudaDeviceTileCounts, cudaDeviceTileOffsets, cudaDeviceTileCircleList
+    // );
+    // cudaDeviceSynchronize();
+    // Step 6: 使用 Thrust 排序每个 tile
+    std::vector<int> hostCounts(totalTiles);
+    std::vector<int> hostOffsets(totalTiles);
+    
+    cudaMemcpy(hostCounts.data(), cudaDeviceTileCounts, 
+               sizeof(int) * totalTiles, cudaMemcpyDeviceToHost);
+    cudaMemcpy(hostOffsets.data(), cudaDeviceTileOffsets, 
+               sizeof(int) * totalTiles, cudaMemcpyDeviceToHost);
+    
+    // 对每个 tile 的列表进行排序
+    for (int i = 0; i < totalTiles; ++i) {
+        if (hostCounts[i] > 1) {
+            thrust::device_ptr<int> begin(cudaDeviceTileCircleList + hostOffsets[i]);
+            thrust::device_ptr<int> end(cudaDeviceTileCircleList + hostOffsets[i] + hostCounts[i]);
+            thrust::sort(begin, end);
+        }
+    }
     cudaDeviceSynchronize();
 }
 
@@ -975,7 +944,7 @@ void CudaRenderer::render() {
     buildTileBins();
     
     // 渲染
-    dim3 blockDim(16, 16);
+    dim3 blockDim(TILE_SIZE, TILE_SIZE);
     dim3 gridDim(
         (image->width + blockDim.x - 1) / blockDim.x,
         (image->height + blockDim.y - 1) / blockDim.y

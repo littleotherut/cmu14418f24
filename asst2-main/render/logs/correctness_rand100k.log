@@ -1,0 +1,23 @@
+Rendering to 1150x1150 image
+Loaded scene with 100000 circles
+Loaded scene with 100000 circles
+---------------------------------------------------------
+Initializing CUDA for CudaRenderer
+Found 1 CUDA devices
+Device 0: NVIDIA GeForce RTX 3050 Laptop GPU
+   SMs:        16
+   Global mem: 3746 MB
+   CUDA Cap:   8.6
+---------------------------------------------------------
+WARNING: You're not running on a fast GPU, please consider using NVIDIA RTX 2080.
+---------------------------------------------------------
+
+Running benchmark, 1 frames, beginning at frame 0 ...
+Copying image data from device
+Mismatch detected at pixel [17][848], value = 1.003859, expected 0.873176 for color Red
+Mismatch detected at pixel [18][848], value = 1.003859, expected 0.873176 for color Red
+Mismatch detected at pixel [19][848], value = 1.003859, expected 0.873176 for color Red
+Mismatch detected at pixel [20][848], value = 1.003859, expected 0.873176 for color Red
+Mismatch detected at pixel [21][848], value = 1.003859, expected 0.873176 for color Red
+Mismatch detected at pixel [22][848], value = 1.003859, expected 0.873176 for color Red
+ERROR : Mismatch detected between reference and actual

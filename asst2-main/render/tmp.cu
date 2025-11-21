@@ -353,18 +353,6 @@ __global__ void kernelAdvanceSnowflake() {
     *((float3*)velocityPtr) = velocity;
 }
 
-
-__device__ __forceinline__ void circleTileBounds(const float3 p,float rad,
-    int tile, int& minTileX, int& maxTileX, int& minTileY, int& maxTileY){
-    short imageWidth = cuConstRendererParams.imageWidth;
-    short imageHeight = cuConstRendererParams.imageHeight;
-    short minX = static_cast<short>(imageWidth * (p.x - rad));
-    short maxX = static_cast<short>(imageWidth * (p.x + rad)) + 1;
-    short minY = static_cast<short>(imageHeight * (p.y - rad));
-    short maxY = static_cast<short>(imageHeight * (p.y + rad)) + 1;
-    
-
-}
 // shadePixel -- (CUDA device code)
 //
 // Given a pixel and a circle, determine the contribution to the
