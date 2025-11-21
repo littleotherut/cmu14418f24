@@ -14,10 +14,10 @@ WARNING: You're not running on a fast GPU, please consider using NVIDIA RTX 2080
 
 Running benchmark, 1 frames, beginning at frame 0 ...
 Copying image data from device
-Mismatch detected at pixel [56][926], value = 0.571200, expected 0.380209 for color Red
-Mismatch detected at pixel [56][926], value = 0.595330, expected 0.423242 for color Green
-Mismatch detected at pixel [57][926], value = 0.549953, expected 0.369585 for color Red
-Mismatch detected at pixel [57][926], value = 0.606043, expected 0.428598 for color Green
-Mismatch detected at pixel [58][926], value = 0.549953, expected 0.369585 for color Red
-Mismatch detected at pixel [58][926], value = 0.606043, expected 0.428598 for color Green
-ERROR : Mismatch detected between reference and actual
+***************** Correctness check passed **************************
+Clear:    0.5801 ms
+Advance:  0.0017 ms
+Render:   758.7797 ms
+Total:    759.3615 ms
+
+Overall:  13.5463 sec (note units are seconds)
