@@ -27,6 +27,18 @@ private:
     float* cudaDeviceRadius;
     float* cudaDeviceImageData;
 
+    // Binning buffers
+    int* cudaDeviceTileCounts;       // 每个 tile 包含的圆数量
+    int* cudaDeviceTileOffsets;      // 前缀和，每个 tile 在 list 中的起始位置
+    int* cudaDeviceTileCircleList;   // 所有 tile 的圆索引列表
+    int* cudaDeviceTileWritePtr;     // 用于原子写入的临时指针
+    
+    int tilesX;
+    int tilesY;
+    int totalTiles;
+    int maxCirclesPerTile;           // 保守估计的上界
+
+
 public:
 
     CudaRenderer();
@@ -51,6 +63,8 @@ public:
         float px, float py, float pz,
         float* pixelData, 
         int circleIndex);
+
+    void buildTileBins();
 };
 
 
